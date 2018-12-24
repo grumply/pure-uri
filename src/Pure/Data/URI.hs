@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP #-}
-module Pure.Data.URI where
+module Pure.Data.URI (decodeURI,decodeURIComponent,encodeURI,encodeURIComponent) where
 
 -- from pure-txt
 import Pure.Data.Txt (Txt,ToTxt(..),FromTxt(..))
@@ -12,40 +12,87 @@ import Data.Char (ord, chr, isHexDigit, isAsciiUpper, isAsciiLower, isDigit, dig
 import Data.List as List
 import Numeric
 
-decodeURI :: Txt -> Txt
-decodeURI encoded =
+-- Decodes percent encodings without discretion.
+decodeURIComponent :: Txt -> Txt
+decodeURIComponent c =
 #ifdef __GHCJS__
-  decodeURIComponent_js encoded
+  decodeURIComponent_js c
 #else
-  unEscapeString encoded
+  unescapeString c
 #endif
 
+-- Decodes percent encodings in uri components. This is like
+-- calling decodeURIComponent over each component of a URI but
+-- not, for instance, the uri scheme. 
+-- Note: on GHC, this just calls `decodeURIComponent`.
+decodeURI :: Txt -> Txt
+decodeURI uri =
+#ifdef __GHCJS__
+  decodeURI_js uri
+#else
+  decodeURIComponent uri
+#endif
+
+-- Percent-encodes without discretion.
+encodeURIComponent :: Txt -> Txt
+encodeURIComponent c =
+#ifdef __GHCJS__
+  encodeURIComponent_js c
+#else
+  escapeString c
+#endif
+
+-- Percent-encodes in uri components. This is like calling 
+-- encodeURIComponent over each component of a URI but not, 
+-- for instance, the uri scheme.
 encodeURI :: Txt -> Txt
 encodeURI uri =
 #ifdef __GHCJS__
-  encodeURIComponent_js uri
+  encodeURI_js uri
 #else
-  escapeString uri
+  escapeURI uri
 #endif
 
 #ifdef __GHCJS__
 foreign import javascript unsafe
-  "$r = decodeURIComponent($1);"
-  decodeURIComponent_js :: Txt -> Txt
+  "$r = decodeURIComponent($1);" decodeURIComponent_js :: Txt -> Txt
 
 foreign import javascript unsafe
-  "$r = encodeURIComponent($1);"
-  encodeURIComponent_js :: Txt -> Txt
+  "$r = encodeURIComponent($1);" encodeURIComponent_js :: Txt -> Txt
+
+foreign import javascript unsafe
+  "$r = decodeURI($1)" decodeURI_js :: Txt -> Txt
+
+foreign import javascript unsafe
+  "$r = encodeURI($1)" encodeURI_js :: Txt -> Txt
 #else
+
+-- Convert a URI into it's percent-encoded equivalent. This does not
+-- percent-encode non-component parts, like `://`.
+escapeURI :: Txt -> Txt
+escapeURI = escapeURIString isUnescapedInURI
+
+-- Convert a string into it's percent-encoded equivalent. This does
+-- percent-encode non-component parts, like `://`.
+escapeString :: Txt -> Txt
+escapeString = escapeURIString isUnescapedInURIComponent
+
+-- This is a dummy implementation as we do not yet have an implementation
+-- of unescapeURI. In principle, we would want an equivalent to javascripts
+-- `decodeURI()`.
+unescapeURI :: Txt -> Txt
+unescapeURI = id
+
+-- Convert a string into it's non-percent-encoded equivlant. This does
+-- percent-decode non-component parts, like `http%3A%2F%2F`.
+unescapeString :: Txt -> Txt
+unescapeString = unEscapeString
 
 --------------------------------------------------------------------------------
 -- percent-decoding from Network.URI; copied to avoid dependency on Parsec
 -- and modified to support Txt
 -- From http://hackage.haskell.org/package/network-uri
 -- by Ezra Cooper, BSD3; minorly modified to appease the hlint god.
-
-escapeString :: Txt -> Txt
-escapeString = escapeURIString isUnescapedInURIComponent
 
 isAlphaChar :: Char -> Bool
 isAlphaChar c = isAsciiUpper c || isAsciiLower c
@@ -68,21 +115,21 @@ isSubDelims c = c `elem` ("!$&'()*+,;=" :: String)
 isUnreserved :: Char -> Bool
 isUnreserved c = isAlphaNumChar c || (c `elem` ("-_.~" :: String))
 
--- | Returns 'True' if the character is allowed unescaped in a URI.
+-- Returns 'True' if the character is allowed unescaped in a URI.
 --
 -- >>> escapeURIString isUnescapedInURI "http://haskell.org:80?some_param=true&other_param=їґ"
 -- "http://haskell.org:80?some_param=true&other_param=%D1%97%D2%91"
 isUnescapedInURI :: Char -> Bool
 isUnescapedInURI c = isReserved c || isUnreserved c
 
--- | Returns 'True' if the character is allowed unescaped in a URI component.
+-- Returns 'True' if the character is allowed unescaped in a URI component.
 --
 -- >>> escapeURIString isUnescapedInURIComponent "http://haskell.org:80?some_param=true&other_param=їґ"
 -- "http%3A%2F%2Fhaskell.org%3A80%3Fsome_param%3Dtrue%26other_param%3D%D1%97%D2%91"
 isUnescapedInURIComponent :: Char -> Bool
 isUnescapedInURIComponent c = not (isReserved c || not (isUnescapedInURI c))
 
--- |Escape character if supplied predicate is not satisfied,
+-- Escape character if supplied predicate is not satisfied,
 --  otherwise return character as singleton string.
 --
 escapeChar :: (Char->Bool) -> Char -> Txt
@@ -122,7 +169,7 @@ utf8EncodeChar = List.map fromIntegral . go . ord
                         , 0x80 + oc .&. 0x3f
                         ]
 
--- |Can be used to make a string valid for use in a URI.
+-- Can be used to make a string valid for use in a URI.
 --
 escapeURIString
     :: (Char->Bool)     -- ^ a predicate which returns 'False'
@@ -131,7 +178,7 @@ escapeURIString
     -> Txt           -- ^ the resulting URI string
 escapeURIString p = Txt.concatMap (escapeChar p)
 
--- |Turns all instances of escaped characters in the string back
+-- Turns all instances of escaped characters in the string back
 --  into literal characters.
 --
 unEscapeString :: Txt -> Txt
